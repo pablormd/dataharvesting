@@ -13,4 +13,6 @@ This work consists of three different parts in technique and development: On the
 
 These three steps have been replicated on other computers and have made the code work. In the extreme case, after the execution of the scrapping part with RSelenium, we have left an updated read.xml with the last Selenium scrapping done before the delivery of this project.
 
+IMPORTANT: The final product comparison section is made in two Shiny Apps. The html format does not allow the export of these apps, so, in order to view these apps, please run Rmd file.
+
 Enjoy the project!! 
