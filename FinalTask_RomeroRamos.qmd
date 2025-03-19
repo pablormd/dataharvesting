@@ -1,0 +1,1356 @@
+---
+title: "New VS Refurbished Apple Products: Data Harvesting Final Project"
+author: "Pablo Romero & Jorge Ramos"
+format: html
+editor: visual
+---
+
+# Libraries and pre-configuration
+
+For the reproducibility of the project, the installation of the following packages is required. With this code, the reproducibility on other computers is guaranteed:
+
+```{r, warning=FALSE, message=FALSE, echo = FALSE}
+# List of required packages
+required_packages <- c("scrapex", "rvest", "httr", "dplyr", "tidyr", 
+                       "stringr", "ggplot2", "RSelenium", "xml2", 
+                       "magrittr", "openxlsx", "shiny")
+
+# Function to install missing packages
+install_if_missing <- function(packages) {
+  new_packages <- packages[!(packages %in% installed.packages()[, "Package"])]
+  if (length(new_packages) > 0) {
+    install.packages(new_packages, dependencies = TRUE)
+  }
+}
+
+# Run the function to install missing packages
+install_if_missing(required_packages)
+
+# Load all required packages
+lapply(required_packages, library, character.only = TRUE)
+
+```
+
+Please change the user_agent as refered in the README Document:
+
+```{r}
+
+set_config(
+  user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36; Pablo Romero / rmepablo@gmail.com")
+)
+
+```
+
+# Introduction
+
+The market for technology products is characterized by rapid innovation and renewal. One of the most relevant cases is that of the Apple brand, which introduces new flagship devices year after year, setting standards in design, performance and functionality. This pace of launches not only drives demand for the latest generation of products, but also gives rise to a parallel market for refurbished devices, an alternative that has been gaining relevance both for its lower cost and its impact on sustainability.
+
+While purchasing refurbished products may represent an attractive option for consumers, questions arise as to how their prices vary compared to new devices. Are there patterns in the price reduction of older models when newer versions are released? Are discounts on refurbished products proportional to their age and specifications? What factors influence the availability of these products within Apple's catalog?
+
+This study seeks to answer these questions by collecting and analyzing data on new and refurbished Apple products. Through Web Scraping techniques with RSelenium, information will be extracted from official platforms and other relevant sources to build a dataset to evaluate the evolution of prices, availability and differences between both product categories.
+
+In addition, an interactive application will be developed in Shiny, which will allow users to visualize price comparisons over time, identify trends in the commercialization of refurbished products and explore possible purchasing opportunities. In this way, the project will not only contribute to a better understanding of pricing dynamics in the Apple ecosystem, but will also provide a useful tool for consumers and analysts interested in this information.
+
+# New Apple Products
+
+Scraping the official Apple website is especially complicated, since the company's security mechanisms make it difficult to extract data from it. So, one of the first decisions we made was to use the official website of one of its official distributors in Spain, instead of extracting the data from the company's official website. Thus, the data scraping of new products will be done from the K-tuin page, where we have selected a model of each product (iPhone, iPad and Macbook).
+
+![](https://www.plazalogistica.com/wp-content/uploads/sites/5/2019/03/logoKtuin.jpg){width="285"}
+
+For all products, the process will be divided into the following steps:
+
+1.  Define the URL and read the page.
+
+2.  Extract the product information.
+
+3.  Extract the images.
+
+4.  Extract the names.
+
+5.  Extract the prices and their type.
+
+6.  Generate a dataframe and extract new variables from the product name.
+
+## iPhone 16
+
+#### URL
+
+The first step is to obtain the information from the **K-Tuin** website where the iPhone 16s are listed.
+
+```{r}
+# K-Tuin URL for the iPhone 16
+ktuin_link_iphone16 <- "https://www.k-tuin.com/comprar-un-iphone/iphone-16"
+
+# Read the HTML of the page
+ktuin <- read_html(ktuin_link_iphone16)
+```
+
+With read_html(), we download the page content and save it in the variable ktuin to analyze its structure.
+
+#### Product
+
+Now we identify and extract all the products listed on the page, which are found in the 'product-info' class of the tags. Therefore, xml_find_all() is used.
+
+```{r}
+# Extraer todos los productos (cada producto está en una 'div' con la clase 'product-info')
+products <- xml_find_all(ktuin, "//div[contains(@class, 'product-info')]")
+
+```
+
+#### Images
+
+In this step, we are going to find all the images and then filter them:
+
+```{r}
+# Extract the URLs of the images 
+image_urls <- xml_attr(xml_find_all(ktuin, "//img[@src]"), "src")
+image_urls <- image_urls[grepl("catalog", image_urls)]  
+
+```
+
+First, the src attribute is extracted from all \<img\> tags that have the src attribute (the image URL) in the HTML content of the page. Then, the grepl filter is used to extract only the images that contain "catalog".
+
+#### Names
+
+The names of the products are inside an \<h2\> tag within product-info.
+
+```{r}
+# Extract the product's names
+names <- products %>%
+  xml_find_first(".//h2[contains(@class, 'product-name')]") %>%
+  xml_text(trim = TRUE)
+```
+
+#### Prices
+
+In this case, it should be noted that there are two prices: the Original Price, which is the price before the discount, and the Special Price, which is the discounted price. Both appear inside a \<p\> tag, in different classes.
+
+```{r}
+# Extract original prices
+original_prices_raw <- products %>%
+  xml_find_all(".//p[contains(@class, 'old-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# Extract only the numeric values in even positions
+original_prices <- original_prices_raw[seq(2, length(original_prices_raw), by = 2)]
+```
+
+```{r}
+# Extract discounted prices 
+special_prices_raw <- products %>%
+  xml_find_all(".//p[contains(@class, 'special-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# Extract only the numeric values in even positions
+special_prices <- special_prices_raw[seq(2, length(special_prices_raw), by = 2)]
+
+```
+
+#### Data frame
+
+We store the information in a DataFrame and add additional columns for two variables that we will extract from the name later: storage and color.
+
+```{r}
+# Create a DataFrame with the obtained data
+new_iphone <- data.frame(
+  id = names,               # Use the product name as ID
+  name = names,             # Product name
+  original_price = original_prices,  # Original price
+  price = special_prices,   # Discounted price
+  storage = NA,             # Column for storage
+  color = NA,               # Column for color
+  stringsAsFactors = FALSE, # Avoid factors to prevent issues with characters
+  image = image_urls        # Image URL
+)
+```
+
+```{r}
+# Extract Storage and Color
+new_iphone <- new_iphone %>%
+  mutate(
+    storage = str_extract(name, "\\d+(GB|TB)"),  # storage
+    color = str_remove(name, "iPhone 16\\s*\\d*(GB|TB)?\\s*") # Remove the storage from the name to leave only the color
+  )
+
+# Clean the names to only contain "iPhone 16"
+new_iphone$name <- "iPhone 16"
+
+```
+
+With these steps, we now have the table of the new iPhones with the data we wanted:
+
+```{r}
+print(new_iphone)
+```
+
+## iPad Pro
+
+Now that we have completed the extraction and processing of data for the iPhone 16, let's apply the same approach to an iPad Pro. By following similar steps, we will gather the necessary details.
+
+#### URL
+
+```{r}
+# K-Tuin URL for the iPad Pro 13
+ktuin_link_ipadPRO <- "https://www.k-tuin.com/comprar-un-ipad/nuevo-ipad-pro/nuevo-ipad-pro-13"
+
+# Read the HTML of the page
+ktuin <- read_html(ktuin_link_ipadPRO)
+
+```
+
+#### Product
+
+```{r}
+# Extract all products (div with the 'product-element' class)
+products <- xml_find_all(ktuin, "//div[contains(@class, 'product-element')]")
+print(products)
+```
+
+#### Images
+
+```{r}
+# Extract image URLs (src attribute)
+image_urls <- xml_attr(xml_find_all(ktuin, "//img[@src]"), "src")
+
+# Filter only the relevant images (those containing 'catalog')
+image_urls <- image_urls[grepl("catalog", image_urls)]
+
+print(image_urls)
+```
+
+#### Names
+
+```{r}
+# Extract product names
+names <- products %>%
+  xml_find_first(".//h2[contains(@class, 'product-name')]") %>%
+  xml_text(trim = TRUE) %>%
+  gsub("\n|Nuevo|\\s{2,}", "", .)  # Remove line breaks, "Nuevo", and extra spaces
+print(names)
+```
+
+#### Prices
+
+In this case, there are three types of prices because some products do not have a discount. Therefore, there will be Old Price, Special Price, and Regular Price.
+
+```{r}
+# Extract original prices
+original_prices_raw <- products %>%
+  xml_find_all(".//p[contains(@class, 'old-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# Extract only numeric values from even positions
+original_prices <- original_prices_raw[seq(2, length(original_prices_raw), by = 2)]
+
+print(original_prices)
+```
+
+```{r}
+# Extract special prices
+special_prices_raw <- products %>%
+  xml_find_all(".//p[contains(@class, 'special-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# Extract only numeric values from even positions
+special_prices <- special_prices_raw[seq(2, length(special_prices_raw), by = 2)]
+print(special_prices)
+```
+
+```{r}
+# Extract regular prices
+regular_prices_raw <- products %>%
+  xml_find_all(".//span[contains(@class, 'regular-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# No filtering needed as there are no duplicates
+regular_prices <- regular_prices_raw
+print(regular_prices)
+```
+
+#### Data Frame
+
+```{r}
+# Create the DataFrame
+new_ipad <- data.frame(
+  id = names,
+  name = names,
+  original_price = NA,  # Original price
+  price = NA,           # Final price
+  storage = NA,         # Storage capacity
+  color = NA,           # iPad color
+  stringsAsFactors = FALSE,
+  image = image_urls    # Image URL
+)
+
+# Assign original prices if they exist
+new_ipad$original_price[!is.na(original_prices)] <- original_prices
+
+# Assign special prices if they exist
+new_ipad$price[!is.na(special_prices)] <- special_prices
+
+# If there is no special price, use the regular price
+new_ipad$price[is.na(new_ipad$price)] <- regular_prices
+
+# If there is no original price, assign the same as the final price
+new_ipad$original_price[is.na(new_ipad$original_price)] <- new_ipad$price[is.na(new_ipad$original_price)]
+
+```
+
+Additionally, in this case, we have special features for this product that were not present in the iPhones, as there are two types of iPad models depending on connectivity: "Wi-Fi" and "Cellular".
+
+```{r}
+new_ipad <- new_ipad %>%
+  mutate(
+    # Storage: Extract storage 
+    storage = str_extract(name, "\\d+(GB|TB)"),
+    
+    # Color: Extract the color without the "Cellular" part
+    color = str_remove(name, ".*\\d+(GB|TB)\\s"),  # Extract everything after storage
+    color = str_remove(color, "Cellular"),  # Remove the word "Cellular" if it exists
+    color = str_trim(color),  # Clean up extra spaces
+    
+    # Adjust Name: If the name contains "Cellular", add it correctly
+    name = ifelse(grepl("Cellular", name), 
+                  gsub("iPad Pro 13\" Chip M4.*", "iPad Pro 13\" Chip M4 + Cellular", name),
+                  gsub("iPad Pro 13\" Chip M4.*", "iPad Pro 13\" Chip M4", name)),
+    
+    # Connectivity: Assign "Cellular" or "Wi-Fi"
+    connectivity = ifelse(grepl("Cellular", id), "Cellular", "Wi-Fi")
+  )
+```
+
+Now, we have all the data saved in the table of iPad:
+
+```{r}
+print(new_ipad)
+```
+
+## Macbook Air
+
+Finally, we will perform the same steps with a MacBook Air. In this case, the process is similar to what we followed for the iPhones and iPads, but with some specific differences for this model, such as the prices, features, and specifications.
+
+#### URL
+
+```{r}
+# URL for K-Tuin's MacBook Air M2
+ktuin_link_airm2 <- "https://www.k-tuin.com/comprar-un-mac/nuevo-macbook-air"
+
+# Read the HTML content of the page
+ktuin <- read_html(ktuin_link_airm2)
+
+```
+
+#### Product
+
+```{r}
+# Extract all the products (div with the 'product-element' class)
+products <- xml_find_all(ktuin, "//div[contains(@class, 'product-element')]")
+print(products)
+```
+
+#### Images
+
+```{r}
+# Extract image URLs (attribute 'src')
+image_urls <- xml_attr(xml_find_all(ktuin, "//img[@src]"), "src")
+
+# Filter only relevant images (those that contain 'catalog' in the URL)
+image_urls <- image_urls[grepl("catalog", image_urls)]
+
+print(image_urls)
+```
+
+#### Names
+
+```{r}
+# Extraer nombres de los productos
+names <- products %>%
+  xml_find_first(".//h2[contains(@class, 'product-name')]") %>%
+  xml_text(trim = TRUE) %>%
+  gsub("\n|Nuevo|\\s{2,}", "", .)
+
+# Mostrar los nombres extraídos
+print(names)
+
+```
+
+#### Prices
+
+In this case, there are only two types of prices:
+
+```{r}
+# Extract original prices
+original_prices_raw <- products %>%
+  xml_find_all(".//p[contains(@class, 'old-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# Extract only the numeric values at even positions
+original_prices <- original_prices_raw[seq(2, length(original_prices_raw), by = 2)]
+print(original_prices)
+```
+
+```{r}
+# Extract special prices 
+special_prices_raw <- products %>%
+  xml_find_all(".//p[contains(@class, 'special-price')]/span[contains(@class, 'price')]") %>%
+  xml_text(trim = TRUE)
+
+# Extract only the numeric values at even positions
+special_prices <- special_prices_raw[seq(2, length(special_prices_raw), by = 2)]
+print(special_prices)
+
+```
+
+#### Data Frame
+
+```{r}
+discount_products <- c(1, 2, 3, 4, 5, 6, 7, 8)  
+# Create the DataFrame with default NA values
+new_macbook <- data.frame(
+  id = names,
+  name = names,
+  original_price = NA,  # Original price (crossed out)
+  price = NA,           # Final price
+  stringsAsFactors = FALSE,
+  image = image_urls    # Image URL
+)
+
+# Assign original prices to the discounted products
+new_macbook$original_price[discount_products] <- original_prices
+
+# Assign special prices to the discounted products
+new_macbook$price[discount_products] <- special_prices  
+
+
+# If there is no original price, assign the same value as the final price
+new_macbook$original_price[is.na(new_macbook$original_price)] <- new_macbook$price[is.na(new_macbook$original_price)]
+```
+
+In this case, there is also another feature that is not present in the iPhone or iPad, which is the RAM:
+
+```{r}
+new_macbook <- new_macbook %>%
+  mutate(
+    # Extract RAM 
+    ram = str_match(name, "(\\d+GB)")[,2],  
+    
+    # Extract storage 
+    storage = str_match(name, "\\d+GB (\\d+GB)")[,2],  
+    
+    # Extract color 
+    color = str_remove(name, ".*\\d+GB \\d+GB "),  
+    
+    # Adjust product name 
+    name = str_remove(name, " \\d+GB \\d+GB .*")  
+  )
+```
+
+Now we can check the MacBook table, and thus finish the dataframes of the new products, which we will combine later.
+
+```{r}
+print(new_macbook)
+```
+
+# Refurbished Apple Products
+
+For the refurbished products, the Spanish company iServices was chosen, as it is one of the most relevant companies dedicated to the repair and refurbishment of electronic devices. In the same way, it was decided to select three products (iPhone, iPad and MacBook). Thus, for this second section, we will use Selenium to ensure the coverage of scraping techniques given throughout the Data Harvesting course. Before starting this second section, please refer to the README document with information regarding the download of Selenium, Java and Mozilla Firefox for proper operation.
+
+![](https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTS6rUgSGsD4l7i2sRU5ghFmJoi1hTOme82AA9gdt2689cqPuVo1w2HfKlcNDBYCWNu-b0&usqp=CAU)
+
+The first step is to start the Selenium client, which is accomplished with the following code.
+
+```{r}
+
+rD <- rsDriver(browser = "firefox", geckover = "latest")
+remDr <- rD$client
+
+```
+
+Once started, we start the whole scrapping process, which is done in its entirety once you decide to run the next chunk. The fact that all the scraping part is done at the same time is to show the power of the tool, which allows you to browse several pages within a website without having to do anything.
+
+```{r}
+
+remDr |> (\(x) {
+  Sys.sleep(10)
+  x$navigate("https://canarias.iservices.es/")
+  Sys.sleep(5)
+}) ()
+
+remDr |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "xpath", value = "//button[contains(@class, 'cm-btn-danger')]")$clickElement()
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    input_box <- x$findElement(using = "xpath", value = "//input[@id='inputSearch']")
+    input_box$sendKeysToElement(list("iphone 16"))
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "xpath", value = "//button[@class='form-search']//img")$clickElement()
+    x
+  })()
+
+remDr |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "xpath", value = "//div[@class='search-result-box transform-ts h-scale-sm']//a[contains(@class, 'btn-warning')]")$clickElement()
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "xpath", value = "//button[contains(@class, 'cm-btn-info')]")$clickElement()
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "xpath", value = "//button[contains(@class, 'cm-btn-success') and contains(@class, 'cm-btn-info')]")$clickElement()
+    x
+  })()
+
+#iPhone 16
+
+price_selector <- "div.current-price span"
+product_name_selector <- "h1.h1.page-title"
+color_selectors <- "ul#group_81 li.float-xs-left.input-container label.simptip-position-top"
+state_selectors <- "ul#group_10 li.input-container.float-xs-left label input.input-radio"
+capacity_selectors <- "ul#group_14 li.input-container.float-xs-left label input.input-radio"
+
+extract_price <- function(remDr) {
+  Sys.sleep(1)
+  price_element <- remDr$findElement(using = 'css', value = price_selector)
+  price_text <- price_element$getElementText()[[1]]
+  clean_price <- gsub("[^0-9,.]", "", price_text)
+  return(as.numeric(gsub(",", ".", clean_price)))
+}
+
+get_colors <- function(remDr) {
+  Sys.sleep(1)
+  elements <- remDr$findElements(using = 'css', value = color_selectors)
+  colors <- list()
+  for (el in elements) {
+    tryCatch({
+      name <- el$findElement(using = 'css', value = "span.color")$getElementText()[[1]]
+      input <- el$findElement(using = 'css', value = "input.input-color")
+      colors[[length(colors) + 1]] <- list(name = name, element = input)
+    }, error = function(e) {})
+  }
+  return(colors)
+}
+
+get_options <- function(remDr, selector) {
+  Sys.sleep(1) 
+  elements <- remDr$findElements(using = 'css', value = selector)
+  options <- list()
+  for (el in elements) {
+    tryCatch({
+      name <- el$getElementAttribute("value")[[1]]
+      options[[length(options) + 1]] <- list(name = name, element = el)
+    }, error = function(e) {})
+  }
+  return(options)
+}
+
+product_name <- remDr$findElement(using = 'css', value = product_name_selector)$getElementText()[[1]]
+
+results <- list()
+
+color_info <- get_colors(remDr)
+
+for (i in seq_along(color_info)) {
+  Sys.sleep(1) 
+  color_info <- get_colors(remDr) 
+  if (length(color_info) < i) next 
+
+  color_info[[i]]$element$clickElement()
+  Sys.sleep(2) 
+
+  current_color <- color_info[[i]]$name
+  print(paste("Selected color:", current_color))
+
+  state_info <- get_options(remDr, state_selectors)
+
+  for (j in seq_along(state_info)) {
+    Sys.sleep(1) 
+    state_info <- get_options(remDr, state_selectors) 
+    if (length(state_info) < j) next
+
+    state_info[[j]]$element$clickElement()
+    Sys.sleep(2)
+
+    current_state <- state_info[[j]]$name
+
+    capacity_info <- get_options(remDr, capacity_selectors)
+
+    for (k in seq_along(capacity_info)) {
+      Sys.sleep(1)
+      capacity_info <- get_options(remDr, capacity_selectors)
+      if (length(capacity_info) < k) next
+
+      capacity_info[[k]]$element$clickElement()
+      Sys.sleep(2)
+
+      current_capacity <- capacity_info[[k]]$name
+      price <- extract_price(remDr)
+
+      results[[length(results) + 1]] <- data.frame(
+        name = product_name,
+        color = current_color,
+        state = current_state,
+        storage = current_capacity,
+        price = price,
+        stringsAsFactors = FALSE
+      )
+
+      print(paste("Processed:", current_color, "-", current_state, "-", current_capacity, "- Price:", price))
+    }
+  }
+}
+
+if (length(results) > 0) {
+  refurbished_iphone <- do.call(rbind, results)
+} else {
+  print("No results found.")
+}
+
+refurbished_iphone$state <- recode(refurbished_iphone$state,
+                               "250" = "Good",
+                               "226" = "Very Good",
+                               "227" = "Excelent")
+
+refurbished_iphone$storage <- recode(refurbished_iphone$storage,
+                                  "252" = "128GB",
+                                  "253" = "256GB")
+
+# iPad Pro
+
+remDr |> (\(x) { 
+    Sys.sleep(2)
+    x$findElement(using = "css selector", "a.header-site-logo img")$clickElement()
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    input_box <- x$findElement(using = "xpath", value = "//input[@id='inputSearch']")
+    input_box$sendKeysToElement(list("ipad pro"))
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "xpath", value = "//button[@class='form-search']//img")$clickElement()
+    x
+  })() |> (\(x) { 
+    Sys.sleep(2)  
+    x$findElement(using = "css selector", "a.btn-warning.primary-button.large-primary-button.mt-0.text-center")$clickElement()
+    x
+  })()
+
+price_selector <- "div.current-price span"
+product_name_selector <- "h1.h1.page-title"
+state_selectors <- "ul#group_10 li.input-container.float-xs-left label input.input-radio"
+capacity_selector <- "ul#group_14 li.input-container.float-xs-left label input.input-radio"
+connectivity_selector <- "ul#group_17 li.input-container.float-xs-left label input.input-radio"
+
+extract_price <- function(remDr) {
+  Sys.sleep(1)
+  price_element <- remDr$findElement(using = 'css', value = price_selector)
+  price_text <- price_element$getElementText()[[1]]
+  clean_price <- gsub("[^0-9,.]", "", price_text)
+  return(as.numeric(gsub(",", ".", clean_price)))
+}
+
+get_options <- function(remDr, selector) {
+  Sys.sleep(1)
+  elements <- remDr$findElements(using = 'css', value = selector)
+  options <- list()
+  for (el in elements) {
+    tryCatch({
+      name <- el$getElementAttribute("value")[[1]]
+      options[[length(options) + 1]] <- list(name = name, element = el)
+    }, error = function(e) {})
+  }
+  return(options)
+}
+
+product_name <- remDr$findElement(using = 'css', value = product_name_selector)$getElementText()[[1]]
+
+color <- "Plata"
+
+results <- list()
+
+state_info <- get_options(remDr, state_selectors)
+
+for (j in seq_along(state_info)) {
+  Sys.sleep(1)
+  state_info <- get_options(remDr, state_selectors)
+  if (length(state_info) < j) next
+
+  state_info[[j]]$element$clickElement()
+  Sys.sleep(2)
+
+  current_state <- ifelse(state_info[[j]]$name == "226", "Very Good", "Excelent")
+
+  capacity_info <- get_options(remDr, capacity_selector)
+
+  for (k in seq_along(capacity_info)) {
+    Sys.sleep(1)
+    capacity_info <- get_options(remDr, capacity_selector)
+    if (length(capacity_info) < k) next
+
+    capacity_info[[k]]$element$clickElement()
+    Sys.sleep(2)
+
+    current_capacity <- "128GB"
+
+    connectivity_info <- get_options(remDr, connectivity_selector)
+
+    if (length(connectivity_info) > 0) {
+      connectivity_info[[1]]$element$clickElement()
+      Sys.sleep(2)
+      connectivity <- "Wi-Fi"
+    } else {
+      connectivity <- "Unknown"
+    }
+
+    price <- extract_price(remDr)
+
+    results[[length(results) + 1]] <- data.frame(
+      name = product_name,
+      color = color,
+      state = current_state,
+      storage = current_capacity,
+      connectivity = connectivity,
+      price = price,
+      stringsAsFactors = FALSE
+    )
+
+    print(paste("Processed:", color, "-", current_state, "-", current_capacity, "-", connectivity, "- Price:", price))
+  }
+}
+
+if (length(results) > 0) {
+  refurbished_ipad <- do.call(rbind, results)
+} else {
+  print("No results found.")
+}
+
+# Macbook Air
+
+remDr |> (\(x) {
+  Sys.sleep(5)
+  x$findElement(using = "css selector", "a.header-site-logo img")$clickElement()
+  x
+})() |> (\(x) {
+  Sys.sleep(2)
+  input_box <- x$findElement(using = "css selector", "input#inputSearch.search-input.search-module")
+  input_box$sendKeysToElement(list("macbook air"))
+  x
+})() |> (\(x) {
+  Sys.sleep(2)
+  x$findElement(using = "css selector", "button.form-search img.submit-button")$clickElement()
+  x
+})() |> (\(x) {
+  Sys.sleep(2)
+  x$findElement(using = "css selector", "ul.list-group.list-group-horizontal li.list-group-item div.search-result-box a.btn-warning")$clickElement()
+  x
+})() |> (\(x) {
+  Sys.sleep(2)
+  x$findElement(using = "css selector", "li#list")$clickElement()
+  x
+})() |> (\(x) {
+  Sys.sleep(2)
+  x$findElement(using = "css selector", "div.product-container-img a.thumbnail.product-thumbnail")$clickElement()
+  x
+})()
+
+price_selector <- "div.current-price span"
+product_name_selector <- "h1.h1.page-title"
+color_selectors <- "ul#group_39 li.input-container label input.input-color"
+state_selectors <- "ul#group_10 li.input-container.float-xs-left label input.input-radio"
+capacity_selector <- "ul#group_14 li.input-container.float-xs-left label input.input-radio"
+processor_selector <- "ul#group_22 li.input-container.float-xs-left label input.input-radio"
+
+extract_price <- function(remDr) {
+  Sys.sleep(1)
+  price_element <- remDr$findElement(using = 'css', value = price_selector)
+  price_text <- price_element$getElementText()[[1]]
+  clean_price <- gsub("[^0-9,.]", "", price_text)
+  return(as.numeric(gsub(",", ".", clean_price)))
+}
+
+get_options <- function(remDr, selector) {
+  Sys.sleep(1)
+  elements <- remDr$findElements(using = 'css', value = selector)
+  options <- list()
+  for (el in elements) {
+    tryCatch({
+      name <- el$getElementAttribute("value")[[1]]
+      options[[length(options) + 1]] <- list(name = name)
+    }, error = function(e) {})
+  }
+  return(options)
+}
+
+product_name <- remDr$findElement(using = 'css', value = product_name_selector)$getElementText()[[1]]
+
+capacity <- "256GB"
+processor <- "Apple M1"
+
+results <- list()
+
+color_info <- get_options(remDr, color_selectors)
+
+for (i in seq_along(color_info)) {
+  Sys.sleep(1)
+  
+  color_elements <- remDr$findElements(using = 'css', value = color_selectors)
+  if (length(color_elements) < i) next
+  
+  color_elements[[i]]$clickElement()
+  Sys.sleep(2)
+  
+  color_map <- list("space_gray" = "Gris Sideral", "silver" = "Plateado", "gold" = "Dorado")
+  current_color <- ifelse(color_info[[i]]$name %in% names(color_map), color_map[[color_info[[i]]$name]], color_info[[i]]$name)
+  
+  state_info <- get_options(remDr, state_selectors)
+  
+  for (j in seq_along(state_info)) {
+    Sys.sleep(1)
+
+    state_elements <- remDr$findElements(using = 'css', value = state_selectors)
+    if (length(state_elements) < j) next
+    
+    state_elements[[j]]$clickElement()
+    Sys.sleep(2)
+    
+    state_map <- list("226" = "Very Good", "227" = "Good", "250" = "Excelent")
+    current_state <- ifelse(state_info[[j]]$name %in% names(state_map), state_map[[state_info[[j]]$name]], state_info[[j]]$name)
+    
+    price <- extract_price(remDr)
+    
+    results[[length(results) + 1]] <- data.frame(
+      name = product_name,
+      color = current_color,
+      state = current_state,
+      storage = capacity,
+      processor = processor,
+      price = price,
+      stringsAsFactors = FALSE
+    )
+    
+    print(paste("Processed:", current_color, "-", current_state, "-", capacity, "-", processor, "- Price:", price))
+  }
+}
+
+if (length(results) > 0) {
+  refurbished_macbook <- do.call(rbind, results)
+} else {
+  print("Results not found.")
+}
+
+refurbished_macbook$color <- recode(refurbished_macbook$color,
+                               "829" = "Sidereal Gray",
+                               "830" = "Silver",
+                               "831" = "Golden")
+
+remDr$close()
+remDr$quit()
+
+```
+
+From all this code using RSelenium, we were able to automate the extraction of information about refurbished products. First, we accessed the home page and interacted with key interface elements, closing pop-up windows and using the search bar to locate specific products, such as the iPhone 16, iPad Pro and MacBook Air. From there, we navigate to product detail pages and capture data about their pricing, colors, states of preservation, storage capacities, and other relevant attributes.
+
+For the iPhone 16, the code first locates and selects the model within the search results. It then identifies the different color, condition (refurbishment grade) and storage capacity options available. Through a series of nested loops, it runs through all possible combinations of these options, selecting each of them in the interface and extracting the final price of the product. This data is stored in a data structure for further analysis. In addition, the status and capability labels are normalized to make them more interpretable.
+
+The same procedure is replicated for the iPad Pro and MacBook Air, with some differences in the website structure. In the case of the iPad Pro, the script also captures connectivity options (Wi-Fi or cellular version). In the case of the MacBook Air, in addition to color and status options, additional features such as processor and storage capacity are considered. Auxiliary functions are implemented to extract options from the selection menus and clean up the extracted values from the page.
+
+At each iteration, the code prints on the console the progress of the scraping, indicating the processed combinations along with the corresponding price. Upon completion, the collected data is consolidated into structured dataframes for further analysis. Overall, the code is designed to systematically capture all available configurations of these products, allowing comparison of prices and features of refurbished devices.
+
+# Comparison
+
+Once the two main scraping parts of this project are done, we proceed to combine the information to get the answer to our main idea: comparing new vs. refurbished Apple products.
+
+```{r}
+new_ipad$ram <- NA
+new_iphone$ram <- NA
+
+# Combine the new products 
+new_products <- bind_rows(new_ipad, new_macbook, new_iphone)
+
+new_products <- new_products %>%
+  mutate(
+    condition = "new",  # Add 'state' column
+    original_price = as.numeric(str_replace_all(original_price, "[^0-9,]", "") %>% str_replace(",", ".")),
+    price = as.numeric(str_replace_all(price, "[^0-9,]", "") %>% str_replace(",", ".")),
+    processor = case_when(
+      grepl("M2", id) ~ "Apple M2",  # If "M2" is detected, assign "Apple M2"
+      grepl("M4", id) ~ "Apple M4",  # If "M4" is detected, assign "Apple M4"
+      TRUE ~ NA_character_          # If neither is found, assign NA
+    )
+  )
+
+head(new_products)
+colnames(new_products)
+```
+
+In case Selenium cannot be used, you can load the dataset of refurbished products using the following code erasing the ##:
+
+```{r}
+
+## refurbished_products <- read.xlsx("https://github.com/pablormd/dataharvesting/raw/refs/heads/main/refurbished_products.xlsx")
+
+```
+
+```{r}
+
+refurbished_ipad$processor <- NA
+refurbished_iphone$processor <- NA
+refurbished_macbook$connectivity <- NA
+refurbished_iphone$connectivity <- NA
+
+# Combine the refurbished products 
+refurbished_products <- bind_rows(refurbished_ipad, refurbished_macbook, refurbished_iphone)
+
+# Create new columns: 'id' (combining name, storage, and color) and 'condition' (set to 'refurbished')
+refurbished_products <- refurbished_products %>%
+  mutate(
+    id = paste(name, storage, color, sep = " "),  # Create a unique ID combining name, storage, and color
+    condition = "refurbished"  # Set the condition to 'refurbished' for all products
+  )
+
+head(refurbished_products)
+colnames(refurbished_products)
+
+```
+
+Now that we have both product tables, we can combine the information from both tables:
+
+```{r}
+
+# Combine both datasets while keeping all the information
+combined_products <- bind_rows(new_products, refurbished_products)
+
+# View the first records
+head(combined_products)
+
+```
+
+## Visualization:
+
+The next step is to display the results, and it has been decided to use the Shiny package to create an interactive application that allows users to view the products more efficiently and attractively.
+
+Interactive elements such as dropdown menus to select features, search bars, and a layout that ensures clear and organized information visualization will be incorporated.
+
+First choice:
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Product Comparator"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("estado", "Select the product condition", choices = c("new", "refurbished")),
+      selectInput("producto", "Select a product:", choices = NULL),
+      uiOutput("almacenamiento_ui"),
+      uiOutput("ram_ui"),
+      uiOutput("color_ui"),
+      uiOutput("state_ui")
+    ),
+    
+    mainPanel(
+      tags$style(HTML("
+        .precio {
+          font-size: 30px;
+          font-weight: bold;
+          color: green;
+        }
+        .precio-original {
+          font-size: 20px;
+          color: gray;
+          text-decoration: line-through;
+        }
+        .error {
+          color: red;
+          font-weight: bold;
+        }
+      ")),
+      
+      uiOutput("precio"),
+      uiOutput("precio_original"),
+      uiOutput("imagen_producto"),
+      uiOutput("logo_tienda")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  observe({
+    req(input$estado)
+    productos_estado <- combined_products %>% filter(condition == input$estado)
+    
+    updateSelectInput(session, "producto", choices = unique(productos_estado$name))
+  })
+  
+  output$almacenamiento_ui <- renderUI({
+    req(input$producto, input$estado)
+    prod <- combined_products %>% filter(name == input$producto, condition == input$estado)
+    
+    available_storage <- unique(prod$storage)
+    selectInput("Almacenamiento", "Select storage:", choices = available_storage)
+  })
+
+  output$ram_ui <- renderUI({
+    req(input$producto, input$estado, input$Almacenamiento)
+    prod <- combined_products %>% filter(name == input$producto, condition == input$estado, storage == input$Almacenamiento)
+    
+    ram_opciones <- unique(prod$ram[!is.na(prod$ram)])
+    if (length(ram_opciones) > 0) {
+      selectInput("ram", "Select RAM:", choices = ram_opciones)
+    } else {
+      return(NULL)
+    }
+  })
+  
+  output$color_ui <- renderUI({
+    req(input$producto, input$estado, input$Almacenamiento)
+    prod <- combined_products %>% filter(name == input$producto, condition == input$estado, storage == input$Almacenamiento)
+    
+    available_color <- unique(prod$color)
+    selectInput("color", "Select color:", choices = available_color)
+  })
+  
+
+  output$state_ui <- renderUI({
+    req(input$estado)
+    if (input$estado == "refurbished") {
+      available_states <- unique(combined_products %>% filter(condition == "refurbished") %>% pull(state))
+      selectInput("state", "Select product state", choices = available_states)
+    }
+  })
+  
+  producto_filtrado <- reactive({
+    req(input$Almacenamiento, input$color)
+    
+    prod <- combined_products %>%
+      filter(name == input$producto, condition == input$estado, storage == input$Almacenamiento, color == input$color)
+    
+    if (input$estado == "refurbished" && !is.null(input$state)) {
+      prod <- prod %>% filter(state == input$state)
+    }
+    if (!is.null(input$ram) && input$ram != "") {
+      prod <- prod %>% filter(ram == input$ram)
+    }
+    
+    return(prod)
+  })
+  
+  output$precio <- renderUI({
+    prod_filtrado <- producto_filtrado()
+    if (nrow(prod_filtrado) == 0) {
+      return(HTML("<span class='error'>❌  NO Products were found with this filter.</span>"))
+    }
+    HTML(paste0("<span class='precio'>💰 Price: ", prod_filtrado$price, "€</span>"))
+  })
+
+  output$precio_original <- renderUI({
+    prod_filtrado <- producto_filtrado()
+    if (nrow(prod_filtrado) == 0) {
+      return(HTML("<span class='error'>❌  NO products were found with thhis filter.</span>"))
+    }
+    if (!is.na(prod_filtrado$original_price[1])) {
+      HTML(paste("<span class='precio-original'>🔥 Original Price: ", prod_filtrado$original_price, "€</span>"))
+    } else {
+      HTML("<span class='error'>❌ there is no original price</span>")
+    }
+  })
+
+output$imagen_producto <- renderUI({
+  prod <- producto_filtrado()
+  
+  img_url <- ifelse(input$producto == "iPhone 16", 
+                    "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTnnfVQ1-eOfp0VJEAbb1SqaO9ah2J6OIoJsQ&s",
+             ifelse(input$producto == 'iPad Pro 12.9" 2021', 
+                    "https://m.media-amazon.com/images/I/81+N4PFF7jS._AC_UF1000,1000_QL80_.jpg",
+             ifelse(input$producto == 'MacBook Air 13 " 2020', 
+                    "https://m.media-amazon.com/images/I/71yIXm6ED2L._AC_UF1000,1000_QL80_.jpg",
+                    prod$image)))  
+  if (!is.null(img_url) && nchar(img_url) > 0) {
+    tags$img(src = img_url, height = "300px", alt = "Product image")
+  } else {
+    tags$img(src = "default-image.jpg", height = "300px", alt = "Image not available")
+  }
+})
+  
+  output$logo_tienda <- renderUI({
+    prod <- producto_filtrado()
+
+    logo_url_new <- "https://www.plazalogistica.com/wp-content/uploads/sites/5/2019/03/logoKtuin.jpg" 
+    logo_url_refurbished <- "https://s3-eu-west-1.amazonaws.com/tpd/logos/5c5327a345f25d0001519cca/0x0.png" 
+    
+    if (nrow(prod) > 0) {
+      if (prod$condition == "new") {
+        tags$img(src = logo_url_new, height = "150px", alt = "Store Logo - New")
+      } else if (prod$condition == "refurbished") {
+        tags$img(src = logo_url_refurbished, height = "150px", alt = "Store Logo - Refurbished")
+      }
+    }
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+
+```
+
+Second choice:
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Product Comparator"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      fluidRow(
+        column(12,
+          wellPanel(
+            h4("New Product"),
+            selectInput("producto_new", "Select a product (New):", choices = NULL),
+            uiOutput("almacenamiento_new_ui"),
+            uiOutput("ram_new_ui"),
+            uiOutput("color_new_ui")
+          )
+        )
+      ),
+      
+      fluidRow(
+        column(12,
+          wellPanel(
+            h4("Refurbished Products"),
+            selectInput("producto_refurbished", "Select a product (Refurbished):", choices = NULL),
+            uiOutput("almacenamiento_refurbished_ui"),
+            uiOutput("ram_refurbished_ui"),
+            uiOutput("color_refurbished_ui"),
+            uiOutput("state_refurbished_ui") 
+          )
+        )
+      )
+    ),
+    
+    mainPanel(
+      tags$style(HTML("
+        .precio {
+          font-size: 30px;
+          font-weight: bold;
+        }
+        .precio-original {
+          font-size: 24px;
+          color: red;
+          font-weight: bold;
+        }
+        .error {
+          color: red;
+        }
+      ")),
+
+      fluidRow(
+        column(6, 
+               uiOutput("precio_new"),
+               uiOutput("precio_original_new"),
+               uiOutput("imagen_producto_new"),
+               uiOutput("logo_tienda_new")),
+        column(6, 
+               uiOutput("precio_refurbished"),
+               uiOutput("precio_original_refurbished"),
+               uiOutput("imagen_producto_refurbished"),
+               uiOutput("logo_tienda_refurbished"))
+      )
+    )
+  )
+)
+
+
+server <- function(input, output, session) {
+  
+  observe({
+    productos_estado_new <- combined_products %>% filter(condition == "new")
+    updateSelectInput(session, "producto_new", choices = unique(productos_estado_new$name))
+  })
+
+  observe({
+    productos_estado_refurbished <- combined_products %>% filter(condition == "refurbished")
+    updateSelectInput(session, "producto_refurbished", choices = unique(productos_estado_refurbished$name))
+  })
+  
+ 
+  observeEvent(input$producto_new, {
+    req(input$producto_new)
+    
+
+    categoria <- ifelse(grepl("iPhone", input$producto_new, ignore.case = TRUE), "iPhone",
+                 ifelse(grepl("iPad", input$producto_new, ignore.case = TRUE), "iPad",
+                 ifelse(grepl("MacBook", input$producto_new, ignore.case = TRUE), "MacBook", NA)))
+
+
+    productos_refurbished_filtrados <- combined_products %>%
+      filter(condition == "refurbished" & grepl(categoria, name, ignore.case = TRUE))
+
+
+    updateSelectInput(session, "producto_refurbished", 
+                      choices = unique(productos_refurbished_filtrados$name))
+  })
+  
+  output$almacenamiento_new_ui <- renderUI({
+    req(input$producto_new)
+    prod <- combined_products %>% filter(name == input$producto_new, condition == "new")
+    selectInput("Almacenamiento_new", "Select storage:", choices = unique(prod$storage))
+  })
+
+  output$almacenamiento_refurbished_ui <- renderUI({
+    req(input$producto_refurbished)
+    prod <- combined_products %>% filter(name == input$producto_refurbished, condition == "refurbished")
+    selectInput("Almacenamiento_refurbished", "Select storage:", choices = unique(prod$storage))
+  })
+
+  output$ram_new_ui <- renderUI({
+    req(input$producto_new, input$Almacenamiento_new)
+    prod <- combined_products %>% filter(name == input$producto_new, condition == "new", storage == input$Almacenamiento_new)
+    ram_opciones <- unique(prod$ram[!is.na(prod$ram)])
+    if (length(ram_opciones) > 0) {
+      selectInput("ram_new", "Select RAM:", choices = ram_opciones)
+    }
+  })
+
+
+  output$ram_refurbished_ui <- renderUI({
+    req(input$producto_refurbished, input$Almacenamiento_refurbished)
+    prod <- combined_products %>% filter(name == input$producto_refurbished, condition == "refurbished", storage == input$Almacenamiento_refurbished)
+    ram_opciones <- unique(prod$ram[!is.na(prod$ram)])
+    if (length(ram_opciones) > 0) {
+      selectInput("ram_refurbished", "Select RAM:", choices = ram_opciones)
+    }
+  })
+
+  output$color_new_ui <- renderUI({
+    req(input$producto_new, input$Almacenamiento_new)
+    prod <- combined_products %>% filter(name == input$producto_new, condition == "new", storage == input$Almacenamiento_new)
+    selectInput("color_new", "Select color:", choices = unique(prod$color))
+  })
+
+
+  output$color_refurbished_ui <- renderUI({
+    req(input$producto_refurbished, input$Almacenamiento_refurbished)
+    prod <- combined_products %>% filter(name == input$producto_refurbished, condition == "refurbished", storage == input$Almacenamiento_refurbished)
+    selectInput("color_refurbished", "Select color:", choices = unique(prod$color))
+  })
+
+  output$state_refurbished_ui <- renderUI({
+    req(input$producto_refurbished)
+    prod <- combined_products %>% filter(name == input$producto_refurbished, condition == "refurbished")
+    selectInput("state_refurbished", "Select state:", choices = unique(prod$state))
+  })
+
+
+  producto_filtrado_new <- reactive({
+    req(input$Almacenamiento_new, input$color_new)
+    prod <- combined_products %>% 
+      filter(name == input$producto_new, condition == "new", storage == input$Almacenamiento_new, color == input$color_new)
+    if (!is.null(input$ram_new) && input$ram_new != "") {
+      prod <- prod %>% filter(ram == input$ram_new)
+    }
+    return(prod)
+  })
+
+
+  producto_filtrado_refurbished <- reactive({
+    req(input$Almacenamiento_refurbished, input$color_refurbished, input$state_refurbished)
+    prod <- combined_products %>% 
+      filter(name == input$producto_refurbished, condition == "refurbished", storage == input$Almacenamiento_refurbished, color == input$color_refurbished, state == input$state_refurbished)
+    if (!is.null(input$ram_refurbished) && input$ram_refurbished != "") {
+      prod <- prod %>% filter(ram == input$ram_refurbished)
+    }
+    return(prod)
+  })
+
+  output$precio_new <- renderUI({
+    prod <- producto_filtrado_new()
+    if (nrow(prod) == 0) return(HTML("<span class='error'>❌ No products found.</span>"))
+    HTML(paste0("<span class='precio'>💰 Price: ", formatC(prod$price[1], format = "f", digits = 2), "€</span>"))
+  })
+
+  output$precio_original_new <- renderUI({
+    prod <- producto_filtrado_new()
+    if (nrow(prod) == 0) return(HTML("<span class='error'>❌ No products found.</span>"))
+    if (!is.na(prod$original_price[1])) {
+      HTML(paste("<span class='precio-original'>🔥 Original Price: ", formatC(prod$original_price[1], format = "f", digits = 2), "€</span>"))
+    } else {
+      return(HTML("<span class='error'>❌ No original price available.</span>"))
+    }
+  })
+
+  output$precio_refurbished <- renderUI({
+    prod <- producto_filtrado_refurbished()
+    if (nrow(prod) == 0) return(HTML("<span class='error'>❌ No products found.</span>"))
+    HTML(paste0("<span class='precio'>💰 Price: ", formatC(prod$price[1], format = "f", digits = 2), "€</span>"))
+  })
+
+  output$precio_original_refurbished <- renderUI({
+    prod <- producto_filtrado_refurbished()
+    if (nrow(prod) == 0) return(HTML("<span class='error'>❌ No products found.</span>"))
+    if (!is.na(prod$original_price[1])) {
+      HTML(paste("<span class='precio-original'>🔥 Original Price: ", formatC(prod$original_price[1], format = "f", digits = 2), "€</span>"))
+    } else {
+      return(HTML("<span class='error'>❌ No original price available.</span>"))
+    }
+  })
+  output$imagen_producto_new <- renderUI({
+    prod_new <- producto_filtrado_new()
+    if (nrow(prod_new) > 0) {
+      img_url <- prod_new$image[1]
+      tags$img(src = img_url, height = "300px", alt = "Product image")
+    } else {
+      tags$img(src = "default-image.jpg", height = "300px", alt = "Image not available")
+    }
+  })
+  
+  output$imagen_producto_refurbished <- renderUI({
+    prod_refurbished <- producto_filtrado_refurbished()
+    if (nrow(prod_refurbished) > 0) {
+      img_url <- switch(prod_refurbished$name[1], 
+                        "iPhone 16" = "https://cdn.grupoelcorteingles.es/SGFM/dctm/MEDIA03/202409/10/00194612201288____11__1200x1200.jpg", 
+                        "MacBook Air 13\" 2020" = "https://m.media-amazon.com/images/I/71yIXm6ED2L._AC_UF1000,1000_QL80_.jpg", 
+                        "iPad Pro 12.9\" 2021" = "https://m.media-amazon.com/images/I/815KnP2wjDS.jpg", 
+                        "default-image.jpg")
+      tags$img(src = img_url, height = "300px", alt = "Refurbished product image")
+    } else {
+      tags$img(src = "default-image.jpg", height = "300px", alt = "Image not available")
+    }
+  })
+  
+  output$logo_tienda_new <- renderUI({
+    tags$img(src = "https://www.plazalogistica.com/wp-content/uploads/sites/5/2019/03/logoKtuin.jpg", height = "150px", alt = "Store Logo - New")
+  })
+  output$logo_tienda_refurbished <- renderUI({
+    tags$img(src = "https://s3-eu-west-1.amazonaws.com/tpd/logos/5c5327a345f25d0001519cca/0x0.png", height = "150px", alt = "Store Logo - Refurbished")
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+
+
+
+```
+
+# Final Considerations
+
+In this paper, we have carried out a data extraction process using web scraping techniques to analyze and compare the prices of new and refurbished Apple products. To do so, we combined two different approaches: manual scraping in R for new products and automation with RSelenium for refurbished products. This methodological choice allowed us to apply in a practical way the different scraping methods covered in the course, ensuring a comprehensive understanding of their advantages and limitations.
+
+After obtaining the data, a cleaning and standardization process was carried out to ensure the consistency and quality of the resulting dataset. Subsequently, an application was developed in Shiny that allows users to compare products based on several variables, facilitating informed decision making. The application not only provides a clear and accessible visualization of the information, but also demonstrates the usefulness of scraping in gathering relevant data for market analysis and price comparison.
+
+## Proposals for improvement
+
+Despite the results obtained, there are several aspects that could be optimized in future work: 1. Expansion of the data source: Currently, the data come from a single source. Including information from other distributors or secondary markets would provide a broader and more representative view of price differences. 2. Automating manual scraping: While manual scraping in R has been useful for understanding the technique, implementing a more automated solution would reduce run times and increase the scalability of the analysis. 3. Enrichment of the dataset: Incorporating additional variables, such as user opinions, warranties or availability in different regions, could improve the depth of the analysis. 4. Optimization of the Shiny App: More advanced filters, additional interactive graphics and better response times could be implemented to make it more efficient and usable. 5. Predictive analytics: Apply Machine Learning techniques to predict the price evolution of refurbished products based on their demand and availability in the market.
+
+## Conclusions
+
+This study has demonstrated the applicability of web scraping for data collection and analysis in commercial environments. The combination of manual and automated scraping has given us a practical perspective on its advantages and challenges, highlighting the importance of choosing the most appropriate technique according to the context.
+
+The integration of the data into an interactive application has added value to the analysis, facilitating the comparison of products and allowing us to explore price differences in an efficient way. Moreover, the experience gained throughout this work reinforces the relevance of web scraping as a key tool in obtaining strategic information in various fields, from market analysis to computational social science research.
+
+Future developments could focus on optimizing and automating the process, as well as enriching the data through additional sources and advanced analysis. In short, this work represents a solid starting point for data exploration and exploitation using web scraping techniques, with practical applications in multiple disciplines.
