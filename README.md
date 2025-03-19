@@ -9,7 +9,7 @@ This work consists of three different parts in technique and development: On the
     - Java 8.441 for Windows: https://www.filehorse.com/download-java-runtime-64/download/#google_vignette
    
 2. Install Firefox Version 135.0.1.: As with Java, it should not be necessary to have the same version of Firefox. To avoid problems, version installer is attached in turn: https://ftp.mozilla.org/pub/firefox/releases/135.0.1/.
-3. Change the user_agent to your own one. If you type "My user agent" in Google you would find your own one to replace. 
+3. In the second chunk of the Rmd, change the user_agent to your own one. If you type "My user agent" in Google you would find your own one to replace. 
 
 These three steps have been replicated on other computers and have made the code work. In the extreme case, after the execution of the scrapping part with RSelenium, we have left an updated read.xml with the last Selenium scrapping done before the delivery of this project.
 
